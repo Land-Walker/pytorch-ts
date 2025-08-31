@@ -8,6 +8,9 @@ from typing import List
 
 import torch
 from tqdm import tqdm
+from .model.time_grad.time_grad_estimator import TimeGradEstimator, EstimatorConfig
+from .model.time_grad.time_grad_network import TimeGradNetwork, NetworkConfig
+from .model.time_grad.diffusion import Diffusion, DiffusionConfig
 
 class Trainer:
     """Trainer for TimeGrad model."""

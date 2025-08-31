@@ -4,7 +4,11 @@ Predictor for generating samples from trained TimeGrad.
 Used for synthetic data inference in your RL pipeline.
 """
 
+from typing import Tuple
+
 import torch
+from .time_grad_network import TimeGradNetwork, NetworkConfig
+from .diffusion import Diffusion, DiffusionConfig
 
 class TimeGradPredictor:
     """Predictor for generating samples from trained TimeGrad."""

@@ -8,6 +8,8 @@ from typing import Dict
 
 import torch
 from pydantic import BaseModel
+from .time_grad_network import TimeGradNetwork
+from .diffusion import Diffusion
 
 class EstimatorConfig(BaseModel):
     """Config for TimeGrad estimator."""

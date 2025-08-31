@@ -3,12 +3,23 @@
 Script to run TimeGrad on S&P500 data, adapted from notebook.
 Trains and tests for MVP validation in your project.
 """
-
+import sys
+import os
 from typing import List
 import torch
 import matplotlib.pyplot as plt
+
+# Add the project root to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, project_root)
+
 from gluonts.dataset.split import split
-from src.pts.model.time_grad import Diffusion, DiffusionConfig, TimeGradNetwork, NetworkConfig, TimeGradEstimator, EstimatorConfig, TimeGradPredictor
+
+# Import from the modules directly
+from src.pts.model.time_grad.diffusion import Diffusion, DiffusionConfig
+from src.pts.model.time_grad.time_grad_network import TimeGradNetwork, NetworkConfig
+from src.pts.model.time_grad.time_grad_estimator import TimeGradEstimator, EstimatorConfig
+from src.pts.model.time_grad.time_grad_predictor import TimeGradPredictor
 from src.pts.trainer import Trainer
 from data_fetch import fetch_sp500_data, prepare_gluonts_dataset, DataConfig
 

@@ -4,7 +4,7 @@ Module to fetch and preprocess S&P500 (^GSPC) time-series data for TimeGrad.
 Handles yfinance fetching, missing data, normalization; fits data pipeline for synthetic generation.
 """
 
-from typing import Tuple
+from typing import Tuple, Optional
 import datetime
 import pandas as pd
 import torch
