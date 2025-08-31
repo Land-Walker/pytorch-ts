@@ -41,12 +41,27 @@ def fetch_sp500_data(config: DataConfig) -> pd.DataFrame:
         ValueError: If fetch fails or data is empty.
     """
     try:
-        df = yf.download(config.symbol, start=config.start_date, end=config.end_date or datetime.date.today().isoformat(),
-                         interval=config.interval)
+        # Fix the yfinance warning by explicitly setting auto_adjust
+        df = yf.download(
+            config.symbol, 
+            start=config.start_date, 
+            end=config.end_date or datetime.date.today().isoformat(),
+            interval=config.interval,
+            auto_adjust=False  # Explicitly set to avoid warning
+        )
+        
         if df.empty:
             raise ValueError("Fetched data is empty.")
-        df = df.ffill().bfill()  # Handle missing data
-        return df[['Close']].rename(columns={'Close': 'close'})  # Use 'close' for consistency
+        
+        # Handle missing data
+        df = df.ffill().bfill()
+        
+        # Return only the Close column and ensure it's a Series (1D)
+        result = df[['Close']].copy()
+        result.columns = ['close']  # Rename for consistency
+        
+        return result
+        
     except Exception as e:
         raise ValueError(f"Data fetch failed: {str(e)}")
 
@@ -61,21 +76,67 @@ def prepare_gluonts_dataset(df: pd.DataFrame, config: DataConfig) -> ListDataset
         ListDataset: GluonTS-compatible dataset.
     """
     try:
-        data = [{'target': df['close'].values, 'start': df.index[0]}]
+        # Extract the close prices as a 1D numpy array
+        target_values = df['close'].values  # This is 1D
+        
+        # Ensure we have enough data
+        min_length = config.context_length + config.prediction_length
+        if len(target_values) < min_length:
+            raise ValueError(f"Not enough data points. Need at least {min_length}, got {len(target_values)}")
+        
+        # Create the dataset entry
+        data = [{
+            'target': target_values,  # 1D array as expected by GluonTS
+            'start': df.index[0]
+        }]
+        
+        # Use lowercase 'h' instead of 'H' to fix the deprecation warning
+        freq = 'h' if config.interval == '1h' else 'D'
+        
         return ListDataset(
             data,
-            freq='1H' if config.interval == '1h' else 'D',
+            freq=freq,
             one_dim_target=True
         )
+        
     except Exception as e:
         raise ValueError(f"Dataset preparation failed: {str(e)}")
+
+def normalize_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, float, float]:
+    """Normalize the data to help with training stability.
+    
+    Args:
+        df: DataFrame with close prices
+        
+    Returns:
+        Tuple of (normalized_df, mean, std) for denormalization later
+    """
+    mean = df['close'].mean()
+    std = df['close'].std()
+    
+    normalized_df = df.copy()
+    normalized_df['close'] = (df['close'] - mean) / std
+    
+    return normalized_df, mean, std
+
+def denormalize_data(normalized_values: torch.Tensor, mean: float, std: float) -> torch.Tensor:
+    """Denormalize the generated samples back to original scale."""
+    return normalized_values * std + mean
 
 if __name__ == "__main__":
     try:
         config = DataConfig(start_date='2024-01-01')
         df = fetch_sp500_data(config)
+        print(f"Fetched data shape: {df.shape}")
+        print(f"Data head:\n{df.head()}")
+        
         dataset = prepare_gluonts_dataset(df, config)
-        print(f"Data shape: {df.shape}, Dataset: {len(dataset)} series")
+        print(f"Dataset created successfully with {len(dataset)} series")
+        
+        # Test normalization
+        norm_df, mean, std = normalize_data(df)
+        print(f"Normalization - Mean: {mean:.2f}, Std: {std:.2f}")
+        
     except ValidationError as ve:
         print(f"Config error: {ve}")
     except ValueError as ve:
