@@ -2,7 +2,7 @@ from typing import List, Optional
 
 import torch
 
-from gluonts.dataset.field_names import FieldName
+from gluonts.dataset.field_names import FieldName 
 from gluonts.time_feature import TimeFeature
 from gluonts.torch.model.predictor import PyTorchPredictor
 from gluonts.torch.util import copy_parameters

@@ -6,10 +6,16 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from pts.model import weighted_average
+from pts.model import weighted_average 
 from pts.modules import GaussianDiffusion, DiffusionOutput, MeanScaler, NOPScaler
 
 from .epsilon_theta import EpsilonTheta
+
+'''
+model: weighted_average, PyTorchEstimator, utils (get_module_forward_input_names)
+modules: GaussianDiffusion, DiffusionOutput, MeanScaler, NOPScaler
+feature: fourier_time_features_from_frequency, lags_for_fourier_time_features_from_frequency
+'''
 
 
 class TimeGradTrainingNetwork(nn.Module):

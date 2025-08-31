@@ -29,6 +29,9 @@ class DiffusionEmbedding(nn.Module):
         table = torch.cat([torch.sin(table), torch.cos(table)], dim=1)
         return table
 
+class EstimateVolatility(nn.Module):
+    def __init__():
+
 
 class ResidualBlock(nn.Module):
     def __init__(self, hidden_size, residual_channels, dilation):
