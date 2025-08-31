@@ -9,6 +9,7 @@ from typing import List
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 # Add the project root to Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -128,48 +129,72 @@ def main():
         )
         print(f"Generated samples shape: {samples.shape}")
 
-        # Simple plotting without normalization issues
+        # --- Visualization ---
         print("Creating visualization...")
-        
-        # Dynamically adjust plot width based on the number of observations
-        dynamic_width = max(12, data_config.prediction_length / 4)
-        plt.figure(figsize=(dynamic_width, 6))
 
-        # Get original data for comparison
-        original_data = df['close'][-data_config.prediction_length:].values
-        
-        # Denormalize synthetic data
-        synthetic_sample = samples[0].detach().numpy()
-        synthetic_denorm = synthetic_sample * data_std + data_mean
-        
-        # Plot comparison
-        plt.subplot(1, 2, 1)
-        plt.plot(original_data, label='Real S&P500', color='blue', linewidth=2)
-        plt.plot(synthetic_denorm, label='Synthetic', color='red', linewidth=2)
-        plt.legend()
-        plt.title('Real vs Synthetic Time Series')
+        # 1. Define the forecast period
+        forecast_start_date = df.index[-data_config.prediction_length]
+        forecast_index = pd.date_range(
+            start=forecast_start_date, 
+            periods=data_config.prediction_length, 
+            freq=df.index.freq
+        )
+
+        # 2. Get historical data to plot (from 2020 onwards, as requested)
+        historical_data_to_plot = df['close']['2020':]
+
+        # 3. Get the actual data for the forecast period for comparison
+        ground_truth_forecast = df['close'][forecast_start_date:]
+
+        # 4. Create the plot
+        # Adjust width based on the number of historical points to display
+        dynamic_width = max(15, len(historical_data_to_plot) / 50) 
+        plt.figure(figsize=(dynamic_width, 7))
+
+        # Plot historical data
+        plt.plot(
+            historical_data_to_plot.index, 
+            historical_data_to_plot.values, 
+            label='Historical Observations (from 2020)', 
+            color='blue'
+        )
+
+        # Plot multiple synthetic samples for the forecast period
+        for i in range(min(5, samples.shape[0])):
+            synthetic_sample = samples[i].detach().numpy()
+            synthetic_denorm = synthetic_sample * data_std + data_mean
+            plt.plot(
+                forecast_index, 
+                synthetic_denorm, 
+                color='red', 
+                alpha=0.3, 
+                label='_nolegend_' if i > 0 else 'Synthetic Forecasts'
+            )
+
+        # Plot the ground truth for the forecast period
+        plt.plot(
+            ground_truth_forecast.index, 
+            ground_truth_forecast.values, 
+            label='Ground Truth (Forecast Period)', 
+            color='black', 
+            linewidth=2
+        )
+
+        plt.title('S&P 500 Price: Historical Data and Forecast')
+        plt.xlabel('Date')
         plt.ylabel('Price')
-        plt.xlabel('Time Steps')
-        
-        # Plot multiple samples
-        plt.subplot(1, 2, 2)
-        for i in range(min(3, samples.shape[0])):
-            sample_denorm = (samples[i].detach().numpy() * data_std + data_mean)
-            plt.plot(sample_denorm, alpha=0.7, label=f'Sample {i+1}')
-        
-        plt.plot(original_data, color='black', linewidth=3, label='Real Data')
-        plt.title('Multiple Synthetic Samples')
-        plt.ylabel('Price')
-        plt.xlabel('Time Steps')
         plt.legend()
-        
+        plt.grid(True)
         plt.tight_layout()
         plt.show()
-        
-        # Print statistics
+
+        # Print statistics for the forecast period
+        original_data = df['close'][-data_config.prediction_length:].values
+        # Use the first sample for statistics comparison
+        synthetic_denorm_for_stats = (samples[0].detach().numpy() * data_std + data_mean)
         print("\n=== Results Summary ===")
-        print(f"Real data - Mean: {np.mean(original_data):.2f}, Std: {np.std(original_data):.2f}")
-        print(f"Synthetic data - Mean: {np.mean(synthetic_denorm):.2f}, Std: {np.std(synthetic_denorm):.2f}")
+        print(f"Real data (forecast period) - Mean: {np.mean(original_data):.2f}, Std: {np.std(original_data):.2f}")
+        print(f"Synthetic data (forecast period) - Mean: {np.mean(synthetic_denorm_for_stats):.2f}, Std: {np.std(synthetic_denorm_for_stats):.2f}")
 
     except Exception as e:
         print(f"Error: {str(e)}")
