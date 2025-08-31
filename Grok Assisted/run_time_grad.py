@@ -8,6 +8,7 @@ import os
 from typing import List
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Add the project root to Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -107,11 +108,10 @@ def main():
         print("Generating synthetic samples...")
         # Generate samples
         predictor = TimeGradPredictor(network, diffusion)
-        h = (
-            torch.zeros(net_config.num_layers, 1, net_config.hidden_dim),
-            torch.zeros(net_config.num_layers, 1, net_config.hidden_dim)
+        samples = predictor.predict(
+            context_length=data_config.prediction_length, 
+            num_samples=100
         )
-        samples = predictor.predict(h, num_samples=100)
         print(f"Generated samples shape: {samples.shape}")
 
         # Simple plotting without normalization issues
@@ -122,7 +122,7 @@ def main():
         original_data = df['close'][-data_config.prediction_length:].values
         
         # Denormalize synthetic data
-        synthetic_sample = samples[0][:len(original_data)].detach().numpy()
+        synthetic_sample = samples[0].detach().numpy()
         synthetic_denorm = synthetic_sample * data_std + data_mean
         
         # Plot comparison
@@ -137,7 +137,7 @@ def main():
         # Plot multiple samples
         plt.subplot(1, 2, 2)
         for i in range(min(3, samples.shape[0])):
-            sample_denorm = (samples[i][:len(original_data)].detach().numpy() * data_std + data_mean)
+            sample_denorm = (samples[i].detach().numpy() * data_std + data_mean)
             plt.plot(sample_denorm, alpha=0.7, label=f'Sample {i+1}')
         
         plt.plot(original_data, color='black', linewidth=3, label='Real Data')
