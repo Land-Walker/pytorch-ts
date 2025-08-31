@@ -28,7 +28,14 @@ def main():
     """Run TimeGrad training and inference on S&P500 data."""
     try:
         # Configs
-        data_config = DataConfig(start_date='2024-01-01', context_length=24, prediction_length=24)
+        # Use daily data ('1d') to fetch the full history from 2010.
+        # yfinance limits hourly ('1h') data to the last ~2 years.
+        data_config = DataConfig(
+            start_date='2010-01-01', 
+            interval='1d',
+            context_length=24, 
+            prediction_length=24
+        )
         net_config = NetworkConfig(input_dim=1, hidden_dim=40, num_layers=2)
         diff_config = DiffusionConfig(num_steps=100, beta_start=1e-4, beta_end=0.1)
         est_config = EstimatorConfig(learning_rate=1e-3, batch_size=64)
@@ -50,7 +57,8 @@ def main():
         print("Dataset prepared successfully")
 
         # Split data
-        train_dataset, test_dataset = split(dataset, offset=-data_config.prediction_length)
+        # We only need the training part from the split for this script.
+        train_dataset, _ = split(dataset, offset=-data_config.prediction_length)
         train_data = list(train_dataset)
         
         print(f"Training data: {len(train_data)} series")
@@ -66,26 +74,32 @@ def main():
             def __iter__(self):
                 for item in self.ds:
                     target_data = item['target']
-                    
-                    if len(target_data) >= self.context_length:
-                        context_data = target_data[-self.context_length:]
+
+                    # Create sliding windows over the entire training series
+                    # to ensure the model sees all the data.
+                    for i in range(len(target_data) - self.context_length + 1):
+                        context_data = target_data[i : i + self.context_length]
                         target_tensor = torch.tensor(
                             context_data.reshape(1, -1, 1), 
                             dtype=torch.float32
                         )
-                        
+
                         hidden = (
                             torch.zeros(self.num_layers, 1, self.hidden_dim),
                             torch.zeros(self.num_layers, 1, self.hidden_dim)
                         )
-                        
+
                         yield {
                             'target': target_tensor,
                             'hidden': hidden
                         }
-                        
+
             def __len__(self):
-                return len(self.ds)
+                # The length is the total number of windows we can create.
+                total_windows = 0
+                for item in self.ds:
+                    total_windows += max(0, len(item['target']) - self.context_length + 1)
+                return total_windows
 
         train_loader = SimpleLoader(
             train_data, 
@@ -116,8 +130,11 @@ def main():
 
         # Simple plotting without normalization issues
         print("Creating visualization...")
-        plt.figure(figsize=(12, 6))
         
+        # Dynamically adjust plot width based on the number of observations
+        dynamic_width = max(12, data_config.prediction_length / 4)
+        plt.figure(figsize=(dynamic_width, 6))
+
         # Get original data for comparison
         original_data = df['close'][-data_config.prediction_length:].values
         
