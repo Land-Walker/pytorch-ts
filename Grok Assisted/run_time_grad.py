@@ -1,7 +1,7 @@
-"""run_timegrad.py
+"""run_time_grad.py
 
-Script to run TimeGrad on S&P500 data, adapted from notebook.
-Trains and tests for MVP validation in your project.
+Updated script to run TimeGrad on S&P500 data with advanced implementation.
+Uses the sophisticated TimeGrad networks, estimators, and predictors.
 """
 import sys
 import os
@@ -15,191 +15,335 @@ import pandas as pd
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, project_root)
 
-from gluonts.dataset.split import split
+# Import from the updated modules
+from src.pts.model.time_grad.time_grad_network import TimeGradTrainingNetwork, TimeGradConfig
+from src.pts.model.time_grad.time_grad_estimator import TimeGradEstimator, TimeGradEstimatorConfig
+from src.pts.model.time_grad.time_grad_predictor import TimeGradPredictor, TimeGradPredictorFactory
+from src.pts.model.time_grad.diffusion import GaussianDiffusion
+from data_fetch import fetch_sp500_data, prepare_gluonts_dataset, DataConfig, normalize_data, denormalize_data
 
-# Import from the modules directly
-from src.pts.model.time_grad.diffusion import Diffusion, DiffusionConfig
-from src.pts.model.time_grad.time_grad_network import TimeGradNetwork, NetworkConfig
-from src.pts.model.time_grad.time_grad_estimator import TimeGradEstimator, EstimatorConfig
-from src.pts.model.time_grad.time_grad_predictor import TimeGradPredictor
-from src.pts.trainer import Trainer
-from data_fetch import fetch_sp500_data, prepare_gluonts_dataset, DataConfig
+
+class SimpleTrainer:
+    """Simple trainer for TimeGrad without full GluonTS dependency."""
+    
+    def __init__(self, epochs: int = 10, learning_rate: float = 1e-3):
+        self.epochs = epochs
+        self.learning_rate = learning_rate
+    
+    def train(self, network: TimeGradTrainingNetwork, dataloader, device: torch.device):
+        """Train the TimeGrad network."""
+        network.train()
+        optimizer = torch.optim.Adam(network.parameters(), lr=self.learning_rate)
+        
+        losses = []
+        
+        for epoch in range(self.epochs):
+            epoch_loss = 0
+            batch_count = 0
+            
+            for batch in dataloader:
+                try:
+                    # Extract batch data
+                    target_dim_indicator = batch['target_dimension_indicator']
+                    past_time_feat = batch['past_time_feat']
+                    past_target_cdf = batch['past_target_cdf']
+                    past_observed_values = batch['past_observed_values']
+                    past_is_pad = batch['past_is_pad']
+                    future_time_feat = batch['future_time_feat']
+                    future_target_cdf = batch['future_target_cdf']
+                    future_observed_values = batch['future_observed_values']
+                    
+                    # Move to device
+                    target_dim_indicator = target_dim_indicator.to(device)
+                    past_time_feat = past_time_feat.to(device)
+                    past_target_cdf = past_target_cdf.to(device)
+                    past_observed_values = past_observed_values.to(device)
+                    past_is_pad = past_is_pad.to(device)
+                    future_time_feat = future_time_feat.to(device)
+                    future_target_cdf = future_target_cdf.to(device)
+                    future_observed_values = future_observed_values.to(device)
+                    
+                    # Forward pass
+                    loss, likelihoods, distr_args = network(
+                        target_dimension_indicator=target_dim_indicator,
+                        past_time_feat=past_time_feat,
+                        past_target_cdf=past_target_cdf,
+                        past_observed_values=past_observed_values,
+                        past_is_pad=past_is_pad,
+                        future_time_feat=future_time_feat,
+                        future_target_cdf=future_target_cdf,
+                        future_observed_values=future_observed_values,
+                    )
+                    
+                    # Backward pass
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                    epoch_loss += loss.item()
+                    batch_count += 1
+                    
+                except Exception as e:
+                    print(f"Batch failed: {e}")
+                    continue
+            
+            avg_loss = epoch_loss / max(batch_count, 1)
+            losses.append(avg_loss)
+            print(f"Epoch {epoch + 1}/{self.epochs}, Loss: {avg_loss:.4f}")
+        
+        return losses
+
+
+class TimeGradDataLoader:
+    """Simple dataloader for TimeGrad training."""
+    
+    def __init__(self, data, config: TimeGradEstimatorConfig, batch_size: int = 8):
+        self.data = data
+        self.config = config
+        self.batch_size = batch_size
+        self.target_dim = config.target_dim
+        
+    def __iter__(self):
+        """Generate batches for training."""
+        for item in self.data:
+            target_data = item['target']
+            
+            # Create sliding windows
+            total_length = len(target_data)
+            context_length = self.config.context_length or self.config.prediction_length
+            history_length = context_length + max([1, 2, 3, 4, 5, 6, 7])  # Default lags
+            
+            if total_length < history_length + self.config.prediction_length:
+                continue
+            
+            # Create multiple samples from this series
+            samples = []
+            max_start = total_length - history_length - self.config.prediction_length
+            
+            for start_idx in range(0, max_start, max(1, max_start // 10)):  # Take 10 samples max per series
+                # Extract past data
+                past_end = start_idx + history_length
+                past_target = target_data[start_idx:past_end]
+                
+                # Extract future data
+                future_start = past_end
+                future_end = future_start + self.config.prediction_length
+                future_target = target_data[future_start:future_end]
+                
+                # Create batch item
+                batch_item = {
+                    'target_dimension_indicator': torch.arange(self.target_dim).unsqueeze(0),
+                    'past_time_feat': torch.zeros(1, history_length, 1),  # Dummy time features
+                    'past_target_cdf': torch.tensor(past_target.reshape(1, -1, 1), dtype=torch.float32),
+                    'past_observed_values': torch.ones(1, history_length, 1),
+                    'past_is_pad': torch.zeros(1, history_length),
+                    'future_time_feat': torch.zeros(1, self.config.prediction_length, 1),
+                    'future_target_cdf': torch.tensor(future_target.reshape(1, -1, 1), dtype=torch.float32),
+                    'future_observed_values': torch.ones(1, self.config.prediction_length, 1),
+                }
+                
+                samples.append(batch_item)
+                
+                if len(samples) >= self.batch_size:
+                    yield self._collate_batch(samples)
+                    samples = []
+            
+            # Yield remaining samples
+            if samples:
+                yield self._collate_batch(samples)
+    
+    def _collate_batch(self, samples):
+        """Collate samples into a batch."""
+        batch = {}
+        for key in samples[0].keys():
+            batch[key] = torch.cat([sample[key] for sample in samples], dim=0)
+        return batch
+    
+    def __len__(self):
+        return 1  # Simplified length calculation
+
 
 def main():
     """Run TimeGrad training and inference on S&P500 data."""
     try:
-        # Configs
-        # Use daily data ('1d') to fetch the full history from 2010.
-        # yfinance limits hourly ('1h') data to the last ~2 years.
+        print("=== TimeGrad S&P500 Experiment ===")
+        
+        # Configuration
         data_config = DataConfig(
-            start_date='2010-01-01', 
+            start_date='2020-01-01', 
             interval='1d',
-            context_length=24, 
-            prediction_length=24
+            context_length=30, 
+            prediction_length=10
         )
-        net_config = NetworkConfig(input_dim=1, hidden_dim=40, num_layers=2)
-        diff_config = DiffusionConfig(num_steps=100, beta_start=1e-4, beta_end=0.1)
-        est_config = EstimatorConfig(learning_rate=1e-3, batch_size=64)
+        
+        estimator_config = TimeGradEstimatorConfig(
+            input_size=8,  # lags + embeddings + time features
+            freq='D',
+            prediction_length=data_config.prediction_length,
+            target_dim=1,
+            context_length=data_config.context_length,
+            num_layers=2,
+            num_cells=64,
+            conditioning_length=64,
+            diff_steps=50,  # Reduced for faster training
+            residual_layers=4,  # Reduced for faster training
+            residual_channels=16,  # Reduced for faster training
+            batch_size=8,
+            epochs=5,  # Reduced for faster training
+            learning_rate=1e-3,
+        )
 
         print("Fetching S&P500 data...")
-        # Fetch data
+        # Fetch and prepare data
         df = fetch_sp500_data(data_config)
-        print(f"Fetched {len(df)} data points")
+        print(f"Fetched {len(df)} data points from {df.index[0]} to {df.index[-1]}")
         
-        # Simple normalization (optional - you can skip this for now)
-        data_mean = df['close'].mean()
-        data_std = df['close'].std()
-        df_normalized = df.copy()
-        df_normalized['close'] = (df['close'] - data_mean) / data_std
+        # Normalize data
+        df_normalized, data_mean, data_std = normalize_data(df)
         print(f"Data normalized - Mean: {data_mean:.2f}, Std: {data_std:.2f}")
         
         # Create dataset
         dataset = prepare_gluonts_dataset(df_normalized, data_config)
-        print("Dataset prepared successfully")
+        train_data = list(dataset)
+        print(f"Dataset created with {len(train_data)} series")
 
-        # Split data
-        # We only need the training part from the split for this script.
-        train_dataset, _ = split(dataset, offset=-data_config.prediction_length)
-        train_data = list(train_dataset)
+        # Create dataloader
+        dataloader = TimeGradDataLoader(train_data, estimator_config)
+        print("DataLoader created")
+
+        # Initialize model components
+        print("Initializing TimeGrad components...")
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {device}")
         
-        print(f"Training data: {len(train_data)} series")
+        # Create estimator and training network
+        estimator = TimeGradEstimator(estimator_config)
+        training_network = estimator.create_training_network(device)
+        print("Training network created")
 
-        # Simple dataloader
-        class SimpleLoader:
-            def __init__(self, ds, context_length, num_layers, hidden_dim):
-                self.ds = ds
-                self.context_length = context_length
-                self.num_layers = num_layers
-                self.hidden_dim = hidden_dim
-                
-            def __iter__(self):
-                for item in self.ds:
-                    target_data = item['target']
-
-                    # Create sliding windows over the entire training series
-                    # to ensure the model sees all the data.
-                    for i in range(len(target_data) - self.context_length + 1):
-                        context_data = target_data[i : i + self.context_length]
-                        target_tensor = torch.tensor(
-                            context_data.reshape(1, -1, 1), 
-                            dtype=torch.float32
-                        )
-
-                        hidden = (
-                            torch.zeros(self.num_layers, 1, self.hidden_dim),
-                            torch.zeros(self.num_layers, 1, self.hidden_dim)
-                        )
-
-                        yield {
-                            'target': target_tensor,
-                            'hidden': hidden
-                        }
-
-            def __len__(self):
-                # The length is the total number of windows we can create.
-                total_windows = 0
-                for item in self.ds:
-                    total_windows += max(0, len(item['target']) - self.context_length + 1)
-                return total_windows
-
-        train_loader = SimpleLoader(
-            train_data, 
-            data_config.context_length, 
-            net_config.num_layers, 
-            net_config.hidden_dim
-        )
-
-        print("Initializing models...")
-        # Initialize models
-        diffusion = Diffusion(diff_config)
-        network = TimeGradNetwork(net_config)
-        estimator = TimeGradEstimator(est_config, network, diffusion)
-        trainer = Trainer(estimator, epochs=10)
+        # Create trainer
+        trainer = SimpleTrainer(epochs=estimator_config.epochs, learning_rate=estimator_config.learning_rate)
         
         print("Starting training...")
-        losses = trainer.train(train_loader)
+        losses = trainer.train(training_network, dataloader, device)
         print(f"Training completed. Final loss: {losses[-1]:.4f}")
+        
+        # Plot training losses
+        plt.figure(figsize=(10, 4))
+        plt.subplot(1, 2, 1)
+        plt.plot(losses)
+        plt.title('Training Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.grid(True)
 
-        print("Generating synthetic samples...")
-        # Generate samples
-        predictor = TimeGradPredictor(network, diffusion)
-        samples = predictor.predict(
-            context_length=data_config.prediction_length, 
-            num_samples=100
+        print("Creating predictor...")
+        # Create predictor
+        from src.pts.model.time_grad.time_grad_network import TimeGradPredictionNetwork
+        
+        prediction_network = TimeGradPredictionNetwork(
+            config=TimeGradConfig(
+                input_size=estimator_config.input_size,
+                num_layers=estimator_config.num_layers,
+                num_cells=estimator_config.num_cells,
+                cell_type=estimator_config.cell_type,
+                history_length=estimator.history_length,
+                context_length=estimator.context_length,
+                prediction_length=estimator_config.prediction_length,
+                dropout_rate=estimator_config.dropout_rate,
+                lags_seq=estimator.lags_seq,
+                target_dim=estimator_config.target_dim,
+                conditioning_length=estimator_config.conditioning_length,
+                diff_steps=estimator_config.diff_steps,
+                loss_type=estimator_config.loss_type,
+                beta_end=estimator_config.beta_end,
+                beta_schedule=estimator_config.beta_schedule,
+                residual_layers=estimator_config.residual_layers,
+                residual_channels=estimator_config.residual_channels,
+                dilation_cycle_length=estimator_config.dilation_cycle_length,
+                cardinality=estimator_config.cardinality,
+                embedding_dimension=estimator_config.embedding_dimension,
+                scaling=estimator_config.scaling,
+            ),
+            num_parallel_samples=20
+        ).to(device)
+        
+        # Copy weights from training network
+        prediction_network.load_state_dict(training_network.state_dict())
+        
+        predictor = TimeGradPredictor(prediction_network)
+        
+        print("Generating predictions...")
+        # Generate some predictions using simple interface
+        num_samples = 10
+        samples = predictor.predict_simple(
+            context_length=data_config.prediction_length,
+            num_samples=num_samples,
+            device=str(device)
         )
-        print(f"Generated samples shape: {samples.shape}")
-
-        # --- Visualization ---
+        
+        print(f"Generated {samples.shape[0]} forecast samples of length {samples.shape[1]}")
+        
+        # Denormalize samples
+        samples_denorm = denormalize_data(samples, data_mean, data_std)
+        
+        # Create visualization
         print("Creating visualization...")
-
-        # 1. Define the forecast period
-        forecast_start_date = df.index[-data_config.prediction_length]
-        forecast_index = pd.date_range(
-            start=forecast_start_date, 
-            periods=data_config.prediction_length, 
-            freq=df.index.freq
-        )
-
-        # 2. Get historical data to plot (from 2020 onwards, as requested)
-        historical_data_to_plot = df['close']['2020':]
-
-        # 3. Get the actual data for the forecast period for comparison
-        ground_truth_forecast = df['close'][forecast_start_date:]
-
-        # 4. Create the plot
-        # Adjust width based on the number of historical points to display
-        dynamic_width = max(15, len(historical_data_to_plot) / 50) 
-        plt.figure(figsize=(dynamic_width, 7))
-
-        # Plot historical data
-        plt.plot(
-            historical_data_to_plot.index, 
-            historical_data_to_plot.values, 
-            label='Historical Observations (from 2020)', 
-            color='blue'
-        )
-
-        # Plot multiple synthetic samples for the forecast period
-        for i in range(min(5, samples.shape[0])):
-            synthetic_sample = samples[i].detach().numpy()
-            synthetic_denorm = synthetic_sample * data_std + data_mean
-            plt.plot(
-                forecast_index, 
-                synthetic_denorm, 
-                color='red', 
-                alpha=0.3, 
-                label='_nolegend_' if i > 0 else 'Synthetic Forecasts'
-            )
-
-        # Plot the ground truth for the forecast period
-        plt.plot(
-            ground_truth_forecast.index, 
-            ground_truth_forecast.values, 
-            label='Ground Truth (Forecast Period)', 
-            color='black', 
-            linewidth=2
-        )
-
-        plt.title('S&P 500 Price: Historical Data and Forecast')
-        plt.xlabel('Date')
+        
+        plt.subplot(1, 2, 2)
+        
+        # Plot recent historical data
+        recent_data = df['close'][-50:]
+        plt.plot(range(len(recent_data)), recent_data.values, 'b-', label='Historical Data', linewidth=2)
+        
+        # Plot predictions
+        forecast_start = len(recent_data)
+        forecast_range = range(forecast_start, forecast_start + data_config.prediction_length)
+        
+        for i in range(min(5, num_samples)):
+            alpha = 0.6 if i == 0 else 0.3
+            label = 'Forecasts' if i == 0 else '_nolegend_'
+            plt.plot(forecast_range, samples_denorm[i].detach().cpu().numpy(), 
+                    'r-', alpha=alpha, label=label)
+        
+        # Plot ground truth for comparison if available
+        if len(df) > len(recent_data):
+            ground_truth = df['close'][-len(recent_data):].values
+            if len(ground_truth) >= forecast_start + data_config.prediction_length:
+                true_forecast = ground_truth[forecast_start:forecast_start + data_config.prediction_length]
+                plt.plot(forecast_range, true_forecast, 'g-', linewidth=2, label='Ground Truth')
+        
+        plt.title('S&P 500: Historical Data and TimeGrad Forecasts')
+        plt.xlabel('Time Steps')
         plt.ylabel('Price')
         plt.legend()
         plt.grid(True)
+        
         plt.tight_layout()
         plt.show()
 
-        # Print statistics for the forecast period
-        original_data = df['close'][-data_config.prediction_length:].values
-        # Use the first sample for statistics comparison
-        synthetic_denorm_for_stats = (samples[0].detach().numpy() * data_std + data_mean)
+        # Print statistics
         print("\n=== Results Summary ===")
-        print(f"Real data (forecast period) - Mean: {np.mean(original_data):.2f}, Std: {np.std(original_data):.2f}")
-        print(f"Synthetic data (forecast period) - Mean: {np.mean(synthetic_denorm_for_stats):.2f}, Std: {np.std(synthetic_denorm_for_stats):.2f}")
+        print(f"Historical data range: {df.index[0]} to {df.index[-1]}")
+        print(f"Number of data points: {len(df)}")
+        print(f"Prediction length: {data_config.prediction_length}")
+        print(f"Number of forecast samples: {num_samples}")
+        
+        recent_prices = df['close'][-10:].values
+        forecast_mean = samples_denorm.mean(dim=0).detach().cpu().numpy()
+        forecast_std = samples_denorm.std(dim=0).detach().cpu().numpy()
+        
+        print(f"Recent actual prices (last 10): {recent_prices}")
+        print(f"Forecast mean: {forecast_mean}")
+        print(f"Forecast std: {forecast_std}")
+        
+        print("\nTimeGrad experiment completed successfully!")
 
     except Exception as e:
         print(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()
