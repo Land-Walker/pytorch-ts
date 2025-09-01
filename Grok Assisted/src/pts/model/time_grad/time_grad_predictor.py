@@ -8,7 +8,7 @@ from typing import Tuple, Optional, Dict, Any
 import torch
 from pydantic import BaseModel
 
-from .time_grad_network import TimeGradPredictionNetwork, TimeGradConfig
+from .time_grad_network import TimeGradTrainingNetwork,TimeGradPredictionNetwork, TimeGradConfig
 from .time_grad_estimator import TimeGradEstimator, TimeGradEstimatorConfig
 
 
