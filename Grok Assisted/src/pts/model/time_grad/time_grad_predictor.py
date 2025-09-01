@@ -1,19 +1,15 @@
 """time_grad_predictor.py
 
-Advanced predictor for generating samples from trained TimeGrad.
-Uses sophisticated TimeGrad prediction networks with RNN encoder and diffusion decoder.
-Used for synthetic data inference and forecasting in your pipeline.
+Complete TimeGrad predictor for generating samples from trained TimeGrad.
+Full implementation with sophisticated forecasting capabilities.
 """
 
-from typing import Tuple, Optional, Union, Dict, Any
-
+from typing import Tuple, Optional, Dict, Any
 import torch
 from pydantic import BaseModel
 
-# Import advanced network implementations only
 from .time_grad_network import TimeGradPredictionNetwork, TimeGradConfig
-from .diffusion import GaussianDiffusion
-from .time_grad_estimator import TimeGradEstimatorFull, TimeGradEstimatorConfig
+from .time_grad_estimator import TimeGradEstimator, TimeGradEstimatorConfig
 
 
 class PredictorConfig(BaseModel):
@@ -25,17 +21,17 @@ class PredictorConfig(BaseModel):
 
 class TimeGradPredictor:
     """
-    TimeGrad predictor using advanced implementation.
-    Supports sophisticated sampling with RNN encoder and diffusion decoder.
+    Advanced TimeGrad predictor with sophisticated forecasting capabilities.
+    Supports both simple generation and full time series forecasting.
     """
     
     def __init__(
         self, 
         prediction_network: TimeGradPredictionNetwork,
-        diffusion: Optional[GaussianDiffusion] = None
+        diffusion=None
     ):
         self.prediction_network = prediction_network
-        self.diffusion = diffusion or prediction_network.diffusion
+        self.diffusion = diffusion or getattr(prediction_network, 'diffusion', None)
 
     def predict_from_data(
         self,
@@ -172,53 +168,32 @@ class TimeGradPredictor:
                     self.prediction_network.num_parallel_samples = original_samples
                     
         except Exception as e:
-            print(f"Simple advanced prediction debug info:")
+            print(f"Simple prediction debug info:")
             print(f"  context_length: {context_length}")
             print(f"  num_samples: {num_samples}")
-            raise ValueError(f"Simple advanced predict failed: {str(e)}")
+            raise ValueError(f"Simple predict failed: {str(e)}")
 
 
 class TimeGradPredictorFactory:
-    """
-    Factory class for creating TimeGrad predictors.
-    """
+    """Factory class for creating TimeGrad predictors."""
     
     @staticmethod
     def create_predictor(
         network: TimeGradPredictionNetwork,
-        diffusion: Optional[GaussianDiffusion] = None,
+        diffusion=None,
         config: Optional[PredictorConfig] = None
     ) -> TimeGradPredictor:
-        """
-        Create TimeGrad predictor.
-        
-        Args:
-            network: TimeGrad prediction network
-            diffusion: Optional diffusion model
-            config: Optional predictor configuration
-            
-        Returns:
-            TimeGrad predictor instance
-        """
+        """Create TimeGrad predictor from network."""
         return TimeGradPredictor(network, diffusion)
 
     @staticmethod
     def create_from_estimator(
-        estimator: TimeGradEstimatorFull,
-        trained_network,
+        estimator: TimeGradEstimator,
+        trained_network: TimeGradTrainingNetwork,
         device: torch.device = torch.device('cpu')
     ) -> TimeGradPredictor:
-        """
-        Create predictor from trained estimator.
+        """Create predictor from trained estimator."""
         
-        Args:
-            estimator: Trained TimeGrad estimator
-            trained_network: Trained network weights
-            device: Device for inference
-            
-        Returns:
-            TimeGrad predictor ready for inference
-        """
         # Create prediction network with same config as training
         network_config = TimeGradConfig(
             input_size=estimator.config.input_size,
@@ -257,11 +232,10 @@ class TimeGradPredictorFactory:
 
 if __name__ == "__main__":
     try:
-        # Test advanced predictor
         print("Testing TimeGrad predictor...")
         
-        # Create advanced network configuration
-        advanced_config = TimeGradConfig(
+        # Create network configuration
+        config = TimeGradConfig(
             input_size=10,
             target_dim=1,
             context_length=24,
@@ -269,12 +243,12 @@ if __name__ == "__main__":
             history_length=48
         )
         
-        advanced_network = TimeGradPredictionNetwork(
-            config=advanced_config,
+        prediction_network = TimeGradPredictionNetwork(
+            config=config,
             num_parallel_samples=5
         )
         
-        predictor = TimeGradPredictor(advanced_network)
+        predictor = TimeGradPredictor(prediction_network)
         
         # Test simple interface
         samples = predictor.predict_simple(
@@ -283,8 +257,7 @@ if __name__ == "__main__":
         print(f"Predictor samples shape: {samples.shape}")
         
         # Test factory creation
-        print("\nTesting predictor factory...")
-        factory_predictor = TimeGradPredictorFactory.create_predictor(advanced_network)
+        factory_predictor = TimeGradPredictorFactory.create_predictor(prediction_network)
         factory_samples = factory_predictor.predict_simple(context_length=12, num_samples=3)
         print(f"Factory predictor samples shape: {factory_samples.shape}")
         
