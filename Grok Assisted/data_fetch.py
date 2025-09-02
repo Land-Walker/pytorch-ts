@@ -36,7 +36,7 @@ except ImportError:
 
 class DataConfig(BaseModel):
     """Configuration for data fetching and preprocessing."""
-    symbol: str = '^GSPC'
+    symbol: str = ''
     start_date: str
     end_date: Optional[str] = None
     interval: str = '1h'

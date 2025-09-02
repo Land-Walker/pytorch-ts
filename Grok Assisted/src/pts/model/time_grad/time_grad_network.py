@@ -281,6 +281,33 @@ class TimeGradTrainingNetwork(nn.Module):
         (distr_args,) = self.proj_dist_args(rnn_outputs)
         return distr_args
 
+    # Add this method to your TimeGradTrainingNetwork class
+    def compute_proper_loss(self, target, distr_args, observed_values):
+        """Compute a proper reconstruction loss when diffusion log_prob is not available."""
+    
+        # Simple MSE loss between target and predicted mean
+        pred_mean = distr_args  # Use distr_args as predicted values
+    
+        # Reshape if needed to match target
+        if pred_mean.shape != target.shape:
+            if len(pred_mean.shape) == 3 and len(target.shape) == 3:
+                # Both have batch, seq, feature dimensions
+                if pred_mean.shape[-1] != target.shape[-1]:
+                    # Project to correct output dimension
+                    pred_mean = pred_mean.mean(dim=-1, keepdim=True)
+    
+        # Compute MSE loss
+        mse_loss = (target - pred_mean) ** 2
+    
+        # Apply observation mask
+        masked_loss = mse_loss * observed_values
+    
+        # Average over non-masked elements
+        loss_per_step = masked_loss.sum(dim=-1, keepdim=True) / (observed_values.sum(dim=-1, keepdim=True) + 1e-8)
+    
+        # Return negative log likelihood (higher loss = lower likelihood)
+        return -loss_per_step
+
     def forward(
         self,
         target_dimension_indicator: torch.Tensor,
@@ -322,7 +349,9 @@ class TimeGradTrainingNetwork(nn.Module):
             likelihoods = self.diffusion.log_prob(target, distr_args).unsqueeze(-1)
         else:
             # Fallback simple loss computation
-            likelihoods = -torch.mean((target - distr_args.mean(dim=-1, keepdim=True))**2, dim=-1, keepdim=True)
+            observed_values_combined = torch.cat(
+            (past_observed_values[:, -self.context_length :, ...], future_observed_values), dim=1)
+            likelihoods = self.compute_proper_loss(target, distr_args, observed_values_combined)
 
         # Compute loss weights
         past_observed_values = torch.min(

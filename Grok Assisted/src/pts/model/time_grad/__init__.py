@@ -12,6 +12,7 @@ from .time_grad_network import (
 )
 from .time_grad_estimator import TimeGradEstimator, TimeGradEstimatorConfig
 from .time_grad_predictor import TimeGradPredictor, TimeGradPredictorFactory
+from src.pts.trainer import Trainer
 
 
 __all__ = [
